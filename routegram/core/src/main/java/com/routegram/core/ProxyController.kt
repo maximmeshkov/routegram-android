@@ -7,47 +7,43 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 
 /**
- * Оркестратор обхода: единственное место, где встречаются
- * "источник прокси" ([ProxyProvider]) и "клиент" ([ProxyApplier]).
+ * Оркестратор: единственное место, где встречаются [ProxyProvider] и [ProxyApplier].
  *
- * На шаге 1 это каркас — спрашивает у провайдера конфигурацию и отдаёт её
- * в applier. Реальная логика (повторы, ротация, авто-выбор лучшего узла,
- * реакция на разрыв связи) появится на следующих шагах.
+ * Два действия, которыми рулит супервайзер:
+ *  - [reestablish] — включить прокси: (пере)поднять движок (provider.obtain() = Stop+Start)
+ *    и применить его конфиг клиенту. Это же «кик» залипшему движку.
+ *  - [disable] — выключить прокси у клиента (apply(null)); движок не трогаем.
+ *
+ * Коалесинг (mutex + rerun + wantOn): наложенные вызовы не стакаются, применяется
+ * ПОСЛЕДНЕЕ целевое состояние.
  */
 class ProxyController(
     private val provider: ProxyProvider,
     private val applier: ProxyApplier
 ) {
-    // Своя корутинная область (≈ собственный пул задач). IO-диспетчер — для сетевых
-    // операций. SupervisorJob: падение одной задачи не валит остальные.
-    // ВАЖНО: scope НЕ торчит в публичном конструкторе — иначе потребителям (:routegram:glue)
-    // пришлось бы тащить kotlinx-coroutines на classpath. Держим его внутренним.
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    // Сериализация + коалесинг: одновременные триггеры не стакаются, но финальный
-    // проход после последнего триггера гарантирован (флаг rerun).
     private val mutex = Mutex()
     @Volatile private var rerun = false
+    @Volatile private var wantOn = false
 
-    /** Первичный запуск: запросить прокси и применить к клиенту. Неблокирующий. */
-    fun start() = trigger()
+    /** Включить прокси: (пере)поднять движок и применить конфиг. Неблокирующий. */
+    fun reestablish() { wantOn = true; trigger() }
 
-    /**
-     * Перезапросить прокси и применить заново — после смены сети или залипания.
-     * Провайдер при повторном obtain() делает чистый рестарт движка.
-     */
-    fun restart() = trigger()
+    /** Выключить прокси у клиента (движок продолжает работать). Неблокирующий. */
+    fun disable() { wantOn = false; trigger() }
 
     private fun trigger() {
         rerun = true
         scope.launch {
-            // Уже крутится цикл — он подхватит свежий rerun; второй запускать не нужно.
             if (!mutex.tryLock()) return@launch
             try {
                 while (rerun) {
                     rerun = false
-                    val config = provider.obtain()
-                    applier.apply(config)
+                    if (wantOn) {
+                        applier.apply(provider.obtain())   // obtain() = Stop+Start движка + конфиг
+                    } else {
+                        applier.apply(null)
+                    }
                 }
             } finally {
                 mutex.unlock()

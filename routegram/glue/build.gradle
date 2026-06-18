@@ -48,6 +48,7 @@ android {
 
 dependencies {
     implementation project(':routegram:core')
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3" // супервайзер: backoff + проба
     implementation project(':routegram:libtgwsproxy') // провайдер ws-proxy (3c)
     // Нужен только ради ConnectionsManager. compileOnly бы тоже скомпилировал,
     // но классы всё равно предоставляет приложение в рантайме — оставляем implementation

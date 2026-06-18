@@ -15,9 +15,10 @@ class TelegramProxyApplier : ProxyApplier {
 
     override fun apply(config: ProxyConfig?) {
         if (config == null) {
-            // Шаг 2: заглушка отдаёт null. НАМЕРЕННО ничего не применяем —
-            // не трогаем прокси-настройки пользователя, поведение клиента = как было.
-            Log.d(TAG, "apply(null) — инертно, прокси клиента не трогаем")
+            // Выключить прокси у клиента (прямое подключение) — нужно супервайзеру,
+            // чтобы при отсутствии нормального инета tgnet показал родное «нет сети».
+            Log.d(TAG, "apply(null) — выключаю прокси (setProxySettings false)")
+            ConnectionsManager.setProxySettings(false, "", 1080, "", "", "")
             return
         }
         Log.d(TAG, "apply: включаю прокси ${config.address}:${config.port}")

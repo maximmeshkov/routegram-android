@@ -1,88 +1,91 @@
 package com.routegram.glue
 
-import android.os.Handler
-import android.os.Looper
+import android.content.Context
+import android.net.ConnectivityManager
 import android.util.Log
 import com.routegram.core.ProxyController
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import org.telegram.messenger.NotificationCenter
 import org.telegram.messenger.UserConfig
 import org.telegram.tgnet.ConnectionsManager
 
 /**
- * Надзор за обходом по РЕАЛЬНОМУ состоянию соединения клиента — детерминированный
- * автомат (по образцу телеграмного ProxyRotationController), без сетевых колбэков
- * и магических дебаунсов.
+ * Супервайзер обхода — по СОСТОЯНИЮ клиента.
  *
- * НЕинвазивен к клиенту: только подписка на публичный
- * [NotificationCenter.didUpdateConnectionState] + чтение [ConnectionsManager.getConnectionState].
- * Ни один upstream-файл не меняется — бамп клиента это не задевает.
+ * Триггер — само `connectionState` (событие [NotificationCenter.didUpdateConnectionState]):
+ *  - **Connected/Updating** → работает, ничего не делаем (ждём следующего события, без таймера).
+ *  - **проблемное** (Connecting / ConnectingToProxy / WaitingForNetwork) → проба «есть ли
+ *    нормальный (иностранный) интернет»:
+ *      есть → [ProxyController.reestablish] (путь существует → поднять/кикнуть движок),
+ *      нет  → [ProxyController.disable]     (пути нет → tgnet сам покажет родное «нет сети»).
  *
- * Правило:
- *   Connected                       -> отменить отложенный reestablish, сбросить эскалацию
- *   WaitingForNetwork               -> отменить (оффлайн — движок чинить бессмысленно)
- *   Connecting | ConnectingToProxy  -> если ещё не запланировано, через T пересобрать движок
- * T эскалирует 10→15→30→60с (как ROTATION_TIMEOUTS у Telegram), сброс на Connected.
+ * Реакция на НОВУЮ проблему (из Connected) — мгновенная (событие будит покой).
+ * [SETTLE_MS] — это НЕ «реакция», а длительность коннекта движка (~5–10с): быстрее кикать
+ * бессмысленно (прервём его же попытку). Он же подавляет наш собственный фликер состояния
+ * во время коннекта (анти-churn) и служит переспросом, если событий нет (whitelist-lift).
+ *
+ * Всё НЕинвазивно: публичные NotificationCenter/ConnectionsManager + чтение activeNetwork +
+ * setProxySettings. Дисплей не трогаем.
  */
 class NetworkSupervisor(
+    private val context: Context,
     private val controller: ProxyController
 ) : NotificationCenter.NotificationCenterDelegate {
 
-    private val handler = Handler(Looper.getMainLooper())
-    private var observedAccount = -1
-    private var pending = false
-    private var escalation = 0
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val wake = Channel<Unit>(Channel.CONFLATED)
+    private val cm get() = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    private var account = -1
 
-    private val reestablish = Runnable {
-        pending = false
-        if (escalation < TIMEOUTS.lastIndex) escalation++   // следующий раз ждём дольше
-        Log.d(TAG, "reestablish: клиент завис → restart движка")
-        controller.restart()
-        evaluate()   // всё ещё плохо — перепланируем с увеличенным T; стало Connected — отменится
+    fun start() {
+        account = UserConfig.selectedAccount
+        NotificationCenter.getInstance(account).addObserver(this, NotificationCenter.didUpdateConnectionState)
+        scope.launch { loop() }
     }
 
-    /** Запустить обход и включить надзор по состоянию соединения. */
-    fun start() {
-        controller.start()
-        observedAccount = UserConfig.selectedAccount
-        NotificationCenter.getInstance(observedAccount)
-            .addObserver(this, NotificationCenter.didUpdateConnectionState)
-        evaluate()
+    private suspend fun loop() {
+        while (scope.isActive) {
+            if (isConnected()) {
+                wake.receive()                 // здоров — ждём события (на изменение реагируем сразу)
+                continue
+            }
+
+            // проблемное состояние → проба и toggle
+            val internet = cm.activeNetwork != null && ForeignProbe.hasNormalInternet()
+            if (internet) {
+                Log.d(TAG, "проблемное состояние + есть инет → прокси ON (reestablish)")
+                controller.reestablish()
+            } else {
+                Log.d(TAG, "проблемное состояние + нет инета → прокси OFF (родной дисплей)")
+                controller.disable()
+            }
+
+            // время коннекта движка: анти-churn (игнор своего фликера) + переспрос беззнакового
+            // случая. На свои события состояния в этом окне НЕ реагируем (не будим раньше).
+            delay(SETTLE_MS)
+        }
+    }
+
+    private fun isConnected(): Boolean {
+        val s = runCatching { ConnectionsManager.getInstance(account).connectionState }.getOrNull() ?: return false
+        // Updating = подключены + синхронизируемся — тоже «подключены».
+        return s == ConnectionsManager.ConnectionStateConnected || s == ConnectionsManager.ConnectionStateUpdating
     }
 
     override fun didReceivedNotification(id: Int, account: Int, vararg args: Any?) {
-        if (id == NotificationCenter.didUpdateConnectionState && account == observedAccount) {
-            evaluate()
-        }
-    }
-
-    private fun evaluate() {
-        val state = ConnectionsManager.getInstance(observedAccount).connectionState
-        when {
-            state == ConnectionsManager.ConnectionStateConnected -> {
-                escalation = 0
-                cancel()
-            }
-            state == ConnectionsManager.ConnectionStateWaitingForNetwork -> cancel()
-            // «не Connected и не оффлайн» = Connecting | ConnectingToProxy
-            else -> if (!pending) {                 // не сбрасываем таймер на переходах «плохо→плохо»
-                pending = true
-                val t = TIMEOUTS[escalation] * 1000L
-                Log.d(TAG, "state=$state → reestablish через ${t / 1000}с")
-                handler.postDelayed(reestablish, t)
-            }
-        }
-    }
-
-    private fun cancel() {
-        if (pending) {
-            pending = false
-            handler.removeCallbacks(reestablish)
+        if (id == NotificationCenter.didUpdateConnectionState && account == this.account) {
+            wake.trySend(Unit)
         }
     }
 
     private companion object {
         const val TAG = "Routegram"
-        // Секунды; эскалация, как ROTATION_TIMEOUTS у Telegram (5/10/15/30/60).
-        val TIMEOUTS = intArrayOf(10, 15, 30, 60)
+        const val SETTLE_MS = 12_000L   // длительность коннекта движка; анти-churn + переспрос
     }
 }

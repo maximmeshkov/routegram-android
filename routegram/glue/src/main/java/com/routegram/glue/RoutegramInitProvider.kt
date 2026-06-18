@@ -36,7 +36,7 @@ class RoutegramInitProvider : ContentProvider() {
             provider = WsProxyProvider(ctx, WsProxySettings()),
             applier = TelegramProxyApplier()
         )
-        val sup = NetworkSupervisor(controller)
+        val sup = NetworkSupervisor(ctx, controller)
         supervisor = sup
 
         Handler(Looper.getMainLooper()).post {
