@@ -24,7 +24,7 @@ import com.routegram.wsproxy.WsProxySettings
  */
 class RoutegramInitProvider : ContentProvider() {
 
-    // Держим ссылку, чтобы супервайзер (network callback + health-poll) жил с процессом.
+    // Держим ссылку, чтобы супервайзер (наблюдатель состояния соединения) жил с процессом.
     private var supervisor: NetworkSupervisor? = null
 
     override fun onCreate(): Boolean {
@@ -36,7 +36,7 @@ class RoutegramInitProvider : ContentProvider() {
             provider = WsProxyProvider(ctx, WsProxySettings()),
             applier = TelegramProxyApplier()
         )
-        val sup = NetworkSupervisor(ctx, controller)
+        val sup = NetworkSupervisor(controller)
         supervisor = sup
 
         Handler(Looper.getMainLooper()).post {

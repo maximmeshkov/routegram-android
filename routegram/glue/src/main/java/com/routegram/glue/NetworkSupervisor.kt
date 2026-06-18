@@ -1,101 +1,88 @@
 package com.routegram.glue
 
-import android.content.Context
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkRequest
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.util.Log
 import com.routegram.core.ProxyController
+import org.telegram.messenger.NotificationCenter
 import org.telegram.messenger.UserConfig
 import org.telegram.tgnet.ConnectionsManager
 
 /**
- * Рантайм-надзор за обходом. Перезапускает движок:
- *  1) при смене сети (VPN on/off, wifi<->mobile) — через ConnectivityManager.NetworkCallback;
- *  2) при залипании клиента — health-poll состояния соединения Telegram.
+ * Надзор за обходом по РЕАЛЬНОМУ состоянию соединения клиента — детерминированный
+ * автомат (по образцу телеграмного ProxyRotationController), без сетевых колбэков
+ * и магических дебаунсов.
  *
- * Без корутин: дебаунс и поллинг на главном Handler; тяжёлую работу (Stop+Start движка
- * и повторный setProxySettings) делает [ProxyController] в своей IO-области.
+ * НЕинвазивен к клиенту: только подписка на публичный
+ * [NotificationCenter.didUpdateConnectionState] + чтение [ConnectionsManager.getConnectionState].
+ * Ни один upstream-файл не меняется — бамп клиента это не задевает.
+ *
+ * Правило:
+ *   Connected                       -> отменить отложенный reestablish, сбросить эскалацию
+ *   WaitingForNetwork               -> отменить (оффлайн — движок чинить бессмысленно)
+ *   Connecting | ConnectingToProxy  -> если ещё не запланировано, через T пересобрать движок
+ * T эскалирует 10→15→30→60с (как ROTATION_TIMEOUTS у Telegram), сброс на Connected.
  */
 class NetworkSupervisor(
-    private val context: Context,
     private val controller: ProxyController
-) {
+) : NotificationCenter.NotificationCenterDelegate {
+
     private val handler = Handler(Looper.getMainLooper())
-    private val cm get() = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    private var observedAccount = -1
+    private var pending = false
+    private var escalation = 0
 
-    private val restartRunnable = Runnable {
-        Log.d(TAG, "supervisor restart (debounced)")
+    private val reestablish = Runnable {
+        pending = false
+        if (escalation < TIMEOUTS.lastIndex) escalation++   // следующий раз ждём дольше
+        Log.d(TAG, "reestablish: клиент завис → restart движка")
         controller.restart()
+        evaluate()   // всё ещё плохо — перепланируем с увеличенным T; стало Connected — отменится
     }
 
-    private val healthRunnable = object : Runnable {
-        private var badSinceMs = 0L
-        override fun run() {
-            checkHealth()
-            handler.postDelayed(this, HEALTH_POLL_MS)
-        }
-
-        private fun checkHealth() {
-            // Нет активной сети — клиент офлайн «по-честному», рестарт движка не поможет.
-            if (cm.activeNetwork == null) { badSinceMs = 0L; return }
-            val connected = runCatching {
-                val acc = UserConfig.selectedAccount
-                ConnectionsManager.getInstance(acc).connectionState == ConnectionsManager.ConnectionStateConnected
-            }.getOrDefault(true)
-            if (connected) {
-                badSinceMs = 0L
-                return
-            }
-            val now = SystemClock.elapsedRealtime()
-            if (badSinceMs == 0L) {
-                badSinceMs = now
-            } else if (now - badSinceMs > STUCK_MS) {
-                Log.d(TAG, "client stuck > ${STUCK_MS}ms → restart")
-                badSinceMs = 0L
-                controller.restart()
-            }
-        }
-    }
-
-    /** Запустить обход и включить надзор. */
+    /** Запустить обход и включить надзор по состоянию соединения. */
     fun start() {
         controller.start()
-        registerNetworkCallback()
-        handler.postDelayed(healthRunnable, HEALTH_POLL_MS)
+        observedAccount = UserConfig.selectedAccount
+        NotificationCenter.getInstance(observedAccount)
+            .addObserver(this, NotificationCenter.didUpdateConnectionState)
+        evaluate()
     }
 
-    private fun registerNetworkCallback() {
-        val cb = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = schedule("available")
-            override fun onLost(network: Network) = schedule("lost")
+    override fun didReceivedNotification(id: Int, account: Int, vararg args: Any?) {
+        if (id == NotificationCenter.didUpdateConnectionState && account == observedAccount) {
+            evaluate()
         }
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                cm.registerDefaultNetworkCallback(cb)
-            } else {
-                cm.registerNetworkCallback(NetworkRequest.Builder().build(), cb)
+    }
+
+    private fun evaluate() {
+        val state = ConnectionsManager.getInstance(observedAccount).connectionState
+        when {
+            state == ConnectionsManager.ConnectionStateConnected -> {
+                escalation = 0
+                cancel()
             }
-        } catch (t: Throwable) {
-            Log.e(TAG, "registerNetworkCallback failed", t)
+            state == ConnectionsManager.ConnectionStateWaitingForNetwork -> cancel()
+            // «не Connected и не оффлайн» = Connecting | ConnectingToProxy
+            else -> if (!pending) {                 // не сбрасываем таймер на переходах «плохо→плохо»
+                pending = true
+                val t = TIMEOUTS[escalation] * 1000L
+                Log.d(TAG, "state=$state → reestablish через ${t / 1000}с")
+                handler.postDelayed(reestablish, t)
+            }
         }
     }
 
-    /** Дебаунс: пачку событий смены сети схлопываем в один рестарт. */
-    private fun schedule(reason: String) {
-        Log.d(TAG, "net change: $reason → debounced restart")
-        handler.removeCallbacks(restartRunnable)
-        handler.postDelayed(restartRunnable, DEBOUNCE_MS)
+    private fun cancel() {
+        if (pending) {
+            pending = false
+            handler.removeCallbacks(reestablish)
+        }
     }
 
     private companion object {
         const val TAG = "Routegram"
-        const val DEBOUNCE_MS = 1500L
-        const val HEALTH_POLL_MS = 15_000L
-        const val STUCK_MS = 20_000L
+        // Секунды; эскалация, как ROTATION_TIMEOUTS у Telegram (5/10/15/30/60).
+        val TIMEOUTS = intArrayOf(10, 15, 30, 60)
     }
 }

@@ -110,6 +110,10 @@ android {
         minSdkVersion 21
         targetSdkVersion 35
 
+        // Routegram: версия из routegram/version.properties (бамп — там) + время сборки.
+        buildConfigField "String", "ROUTEGRAM_VERSION", "\"" + getRoutegramVersion() + "\""
+        buildConfigField "String", "ROUTEGRAM_BUILD_TIME", "\"" + new Date().format("yyyy-MM-dd HH:mm") + "\""
+
         vectorDrawables.generatedDensities = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi']
 
         multiDexEnabled true
@@ -235,6 +239,17 @@ def getProps(String propName) {
     } else {
         return "";
     }
+}
+
+// Routegram: версия нашего форка из отдельного файла, чтобы бампать без копания в коде.
+def getRoutegramVersion() {
+    def f = rootProject.file('routegram/version.properties')
+    if (f.exists()) {
+        def props = new Properties()
+        props.load(new FileInputStream(f))
+        return props.getProperty('version', 'dev')
+    }
+    return 'dev'
 }
 apply plugin: 'com.google.gms.google-services'
 

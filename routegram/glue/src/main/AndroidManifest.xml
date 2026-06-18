@@ -4,8 +4,6 @@
      который зависит от :routegram:glue — без правок ApplicationLoader.
      authority уникален per-app благодаря ${applicationId}. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Нужно супервайзеру для NetworkCallback (у Telegram уже есть; дублируем для самодостаточности). -->
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <application>
         <provider
             android:name="com.routegram.glue.RoutegramInitProvider"

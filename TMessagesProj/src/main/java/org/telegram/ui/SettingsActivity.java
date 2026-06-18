@@ -909,7 +909,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                     }
                     break;
             }
-            return formatString(R.string.TelegramVersion, String.format(Locale.US, "v%s (%d)\n%s", pInfo.versionName, code, abi));
+            return String.format(Locale.US, "RouteGram v%s (%s)\nbased on Telegram for Android v%s (%d) %s",
+                    org.telegram.messenger.BuildConfig.ROUTEGRAM_VERSION, org.telegram.messenger.BuildConfig.ROUTEGRAM_BUILD_TIME,
+                    pInfo.versionName, code, abi);
         } catch (Exception e) {
             FileLog.e(e);
         }
