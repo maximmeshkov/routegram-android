@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Пустой манифест: модуль не содержит Android-компонентов.
+     namespace задан в build.gradle (AGP 8). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

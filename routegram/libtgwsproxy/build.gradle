@@ -1,0 +1,70 @@
+// :routegram:libtgwsproxy — нативная обёртка ws-proxy («почти-либа»).
+// Собирает libtgwsproxy.so из submodule routegram/third_party/tg-ws-proxy через
+// cargo-ndk и вызывает его C-API через JNA. Зависит только от :routegram:core.
+// Submodule и его build_so.bat НЕ трогаем — собираем своей Gradle-задачей в build/.
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+repositories {
+    mavenCentral()
+    google()
+}
+
+def cargoBin = "${System.getProperty('user.home')}/.cargo/bin"
+def rustCrate = file("$rootDir/routegram/third_party/tg-ws-proxy")
+
+android {
+    namespace 'com.routegram.wsproxy'
+    compileSdkVersion 35
+    ndkVersion '27.2.12479018'
+
+    defaultConfig {
+        minSdkVersion 21
+        targetSdkVersion 35
+        // R8 приложения минифицирует и наш код. JNA маппит интерфейс на C-функции
+        // ПО ИМЕНАМ методов — эти keep-правила едут с библиотекой в потребителя.
+        consumerProguardFiles 'consumer-rules.pro'
+    }
+
+    // Зеркалим кастомные buildType'ы upstream — чтобы variant-matching разрешился,
+    // когда приложение через :routegram:glue потянет этот модуль.
+    buildTypes {
+        standalone {}
+        HA_private {}
+        HA_public {}
+        HA_hardcore {}
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    // Собранные .so подхватываются отсюда и пакуются в AAR.
+    sourceSets.main.jniLibs.srcDirs += "$buildDir/rustJniLibs"
+}
+
+// Сборка .so из Rust-submodule через cargo-ndk. Стерильно: cargo target и вывод — в build/.
+// Пересобирается только при изменении Rust-исходников (inputs/outputs).
+task buildRustProxy(type: Exec) {
+    workingDir  rustCrate
+    environment 'ANDROID_NDK_HOME', android.ndkDirectory.absolutePath
+    environment 'CARGO_TARGET_DIR', "$buildDir/rustTarget"
+    environment 'PATH', "$cargoBin${File.pathSeparator}${System.getenv('PATH')}"
+    commandLine "$cargoBin/cargo.exe", 'ndk',
+                '-t', 'arm64-v8a', '-t', 'armeabi-v7a', '-t', 'x86_64',
+                '-o', "$buildDir/rustJniLibs", 'build', '--release'
+    inputs.files fileTree(rustCrate) { include 'src/**', 'Cargo.toml', 'Cargo.lock' }
+    outputs.dir "$buildDir/rustJniLibs"
+}
+preBuild.dependsOn buildRustProxy
+
+dependencies {
+    implementation project(':routegram:core')
+    implementation 'net.java.dev.jna:jna:5.14.0@aar'
+}

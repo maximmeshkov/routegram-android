@@ -1,0 +1,7 @@
+// Список наших модулей. Подключается из корневого settings.gradle одной строкой:
+//   apply from: 'routegram/settings.gradle'
+// Дальше добавляем сюда сколько угодно модулей — корневой файл больше не трогаем.
+
+include ':routegram:core'
+include ':routegram:glue'
+include ':routegram:libtgwsproxy'

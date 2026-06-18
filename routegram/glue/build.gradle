@@ -1,0 +1,56 @@
+// :routegram:glue — адаптер между чистым :routegram:core и клиентом Telegram.
+// ЕДИНСТВЕННЫЙ наш модуль, зависящий от :TMessagesProj. Здесь сосредоточена вся
+// Telegram-специфика (ConnectionsManager) + авто-старт через ContentProvider.
+// Сломается API клиента при бампе — чинить тут, в одном месте.
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+repositories {
+    mavenCentral()
+    google()
+}
+
+android {
+    namespace 'com.routegram.glue'
+    compileSdkVersion 35
+
+    defaultConfig {
+        minSdkVersion 21
+        targetSdkVersion 35
+    }
+
+    // Зеркалим кастомные buildType'ы upstream (:TMessagesProj / app-варианты),
+    // чтобы variant-matching находил точное соответствие, когда приложение
+    // собирается в одном из них (например, standalone). Тела пустые — для
+    // библиотеки достаточно, чтобы тип просто существовал по имени.
+    buildTypes {
+        standalone {}
+        HA_private {}
+        HA_public {}
+        HA_hardcore {}
+        // debug и release присутствуют по умолчанию
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+        // :TMessagesProj транзитивно тянет kotlin-stdlib 2.1.x, а проект компилируется
+        // Kotlin 1.9.20. Пропускаем проверку версии метаданных (stdlib обратно совместим),
+        // чтобы НЕ менять версию Kotlin в upstream-корне. Приоритет — лёгкий бамп клиента.
+        freeCompilerArgs += ["-Xskip-metadata-version-check"]
+    }
+}
+
+dependencies {
+    implementation project(':routegram:core')
+    implementation project(':routegram:libtgwsproxy') // провайдер ws-proxy (3c)
+    // Нужен только ради ConnectionsManager. compileOnly бы тоже скомпилировал,
+    // но классы всё равно предоставляет приложение в рантайме — оставляем implementation
+    // для простоты (дубля не будет: app зависит от :TMessagesProj напрямую).
+    implementation project(':TMessagesProj')
+}

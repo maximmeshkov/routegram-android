@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Нет Android-компонентов; namespace задан в build.gradle. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

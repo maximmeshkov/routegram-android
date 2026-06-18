@@ -1,0 +1,44 @@
+// :routegram-core — изолированный модуль обхода блокировок.
+// Не зависит от Telegram-кода (:TMessagesProj). Связь с клиентом — только
+// через интерфейс ProxyApplier, который реализуется на стороне форка.
+// Цель изоляции: апдейт upstream-клиента не задевает этот модуль.
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+repositories {
+    mavenCentral()
+    google()
+}
+
+android {
+    namespace 'com.routegram.core'
+    compileSdkVersion 35
+
+    defaultConfig {
+        minSdkVersion 21
+        targetSdkVersion 35
+    }
+
+    // Зеркалим кастомные buildType'ы upstream — иначе variant-matching не найдёт
+    // standalone/HA_* варианты, когда приложение в одном из них тянет :routegram:core.
+    buildTypes {
+        standalone {}
+        HA_private {}
+        HA_public {}
+        HA_hardcore {}
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+}
