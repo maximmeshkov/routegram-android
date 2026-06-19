@@ -377,6 +377,9 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
             }
         });
 
+        // Routegram: экран управления прокси застаблен — клиент использует собственный обход.
+        AndroidUtilities.runOnUIThread(() -> AndroidUtilities.showRoutegramProxyUnsupported(getParentActivity(), this::finishFragment));
+
         listAdapter = new ListAdapter(context);
 
         fragmentView = new FrameLayout(context);

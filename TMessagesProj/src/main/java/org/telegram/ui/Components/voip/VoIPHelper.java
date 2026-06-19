@@ -73,7 +73,28 @@ public class VoIPHelper {
 
 	private static final int VOIP_SUPPORT_ID = 4244000;
 
+	// Routegram: звонки/войс-чаты не работают через ws-proxy (ограничение MTProto-прокси, не клиента — issue #389).
+	private static final String ROUTEGRAM_CALLS_FAQ = "https://github.com/Flowseal/tg-ws-proxy/issues/389";
+	private static void showRoutegramCallsUnsupported(Activity activity) {
+		if (activity == null) {
+			return;
+		}
+		boolean ru = AndroidUtilities.routegramIsRu();
+		new AlertDialog.Builder(activity)
+				.setTitle(ru ? "Звонки" : "Calls")
+				.setMessage(ru
+						? "Голосовые и видеозвонки недоступны при использовании ws-proxy. MTProto-прокси архитектурно не поддерживает звонки и войс-чаты — это ограничение технологии, а не клиента."
+						: "Voice and video calls are unavailable when using ws-proxy. MTProto proxy does not support calls or voice chats by design — a limitation of the technology, not the client.")
+				.setNegativeButton(ru ? "Назад" : "Back", null)
+				.setPositiveButton(ru ? "Подробнее" : "Learn more", (d, w) -> org.telegram.messenger.browser.Browser.openUrl(activity, ROUTEGRAM_CALLS_FAQ))
+				.create()
+				.show();
+	}
+
 	public static void startCall(TLRPC.User user, boolean videoCall, boolean canVideoCall, final Activity activity, TLRPC.UserFull userFull, AccountInstance accountInstance) {
+		// Routegram: звонки заблокированы — ws-proxy их не поддерживает.
+		showRoutegramCallsUnsupported(activity);
+		if (true) return;
 		if (accountInstance == null ? MessagesController.getInstance(UserConfig.selectedAccount).isFrozen() : accountInstance.getMessagesController().isFrozen()) {
 			AccountFrozenAlert.show(accountInstance == null ? UserConfig.selectedAccount : accountInstance.getCurrentAccount());
 			return;
@@ -126,6 +147,9 @@ public class VoIPHelper {
 	}
 
 	public static void startCall(TLRPC.Chat chat, TLRPC.InputPeer peer, String hash, boolean createCall, Boolean checkJoiner, Activity activity, BaseFragment fragment, AccountInstance accountInstance) {
+		// Routegram: звонки/войс-чаты заблокированы — ws-proxy их не поддерживает.
+		showRoutegramCallsUnsupported(activity);
+		if (true) return;
 		if (activity == null) {
 			return;
 		}

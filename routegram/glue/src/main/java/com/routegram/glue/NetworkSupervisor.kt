@@ -2,36 +2,41 @@ package com.routegram.glue
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.os.SystemClock
 import android.util.Log
 import com.routegram.core.ProxyController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.telegram.messenger.NotificationCenter
+import org.telegram.messenger.ProxyRotationController
+import org.telegram.messenger.SharedConfig
 import org.telegram.messenger.UserConfig
 import org.telegram.tgnet.ConnectionsManager
 
 /**
- * Супервайзер обхода — по СОСТОЯНИЮ клиента.
+ * Супервайзер обхода — по СОСТОЯНИЮ клиента, с таймингом из самого Telegram.
  *
- * Триггер — само `connectionState` (событие [NotificationCenter.didUpdateConnectionState]):
- *  - **Connected/Updating** → работает, ничего не делаем (ждём следующего события, без таймера).
- *  - **проблемное** (Connecting / ConnectingToProxy / WaitingForNetwork) → проба «есть ли
- *    нормальный (иностранный) интернет»:
- *      есть → [ProxyController.reestablish] (путь существует → поднять/кикнуть движок),
- *      нет  → [ProxyController.disable]     (пути нет → tgnet сам покажет родное «нет сети»).
+ * Триггер — `connectionState` (событие [NotificationCenter.didUpdateConnectionState]):
+ *  - **Connected/Updating** → покой (ждём события; на изменение реагируем сразу).
+ *  - **проблемное** (Connecting / ConnectingToProxy / WaitingForNetwork):
+ *      * ПЕРВЫЙ раз (движок ещё не поднимали) → действуем СРАЗУ — быстрый подъём прокси на старте;
+ *      * далее → сначала ждём **T** и перепроверяем. Если за T вернулись в Connected (например,
+ *        дребезг tgnet 3→4→3 за ~200мс, или tgnet/движок сами восстановились) — в покой,
+ *        движок НЕ трогаем. Это убирает ложные «connecting to proxy на пустом месте» (мы их
+ *        раньше сами создавали, перезапуская движок на мгновенный дребезг). Держится дольше T →
+ *        проба «есть нормальный инет» и toggle прокси.
  *
- * Реакция на НОВУЮ проблему (из Connected) — мгновенная (событие будит покой).
- * [SETTLE_MS] — это НЕ «реакция», а длительность коннекта движка (~5–10с): быстрее кикать
- * бессмысленно (прервём его же попытку). Он же подавляет наш собственный фликер состояния
- * во время коннекта (анти-churn) и служит переспросом, если событий нет (whitelist-lift).
+ * **T берётся из ТЕЛЕГРАМНОГО** [ProxyRotationController.ROTATION_TIMEOUTS] (с учётом выбора
+ * пользователя [SharedConfig.proxyRotationTimeout], дефолт ~10с) — не из выдуманной константы,
+ * привязанной к конкретному девайсу.
  *
- * Всё НЕинвазивно: публичные NotificationCenter/ConnectionsManager + чтение activeNetwork +
- * setProxySettings. Дисплей не трогаем.
+ * Всё НЕинвазивно: публичные NotificationCenter/ConnectionsManager/ProxyRotationController +
+ * чтение activeNetwork + setProxySettings.
  */
 class NetworkSupervisor(
     private val context: Context,
@@ -42,6 +47,7 @@ class NetworkSupervisor(
     private val wake = Channel<Unit>(Channel.CONFLATED)
     private val cm get() = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private var account = -1
+    private var started = false   // сделали ли первичный (немедленный) подъём
 
     fun start() {
         account = UserConfig.selectedAccount
@@ -52,24 +58,46 @@ class NetworkSupervisor(
     private suspend fun loop() {
         while (scope.isActive) {
             if (isConnected()) {
-                wake.receive()                 // здоров — ждём события (на изменение реагируем сразу)
+                wake.receive()                 // покой; на изменение реагируем сразу
                 continue
             }
+            // Не Connected. Кроме самого первого раза — НЕ дёргаемся сразу: ждём T и
+            // перепроверяем. Вернулись в Connected за T (дребезг / самоисцеление) → в покой,
+            // движок не трогаем. Иначе проблема настоящая → действуем.
+            if (started && recoveredWithin(rotationTimeoutMs())) continue
+            started = true
 
-            // проблемное состояние → проба и toggle
             val internet = cm.activeNetwork != null && ForeignProbe.hasNormalInternet()
             if (internet) {
-                Log.d(TAG, "проблемное состояние + есть инет → прокси ON (reestablish)")
+                Log.d(TAG, "связь: ${stateName(state())} — проблема, интернет есть → перезапускаю прокси")
                 controller.reestablish()
             } else {
-                Log.d(TAG, "проблемное состояние + нет инета → прокси OFF (родной дисплей)")
+                Log.d(TAG, "связь: ${stateName(state())} — проблема, интернета нет → выключаю прокси")
                 controller.disable()
             }
-
-            // время коннекта движка: анти-churn (игнор своего фликера) + переспрос беззнакового
-            // случая. На свои события состояния в этом окне НЕ реагируем (не будим раньше).
-            delay(SETTLE_MS)
         }
+    }
+
+    /** Ждать до timeoutMs; true — если стали Connected (через события wake), false — если T истёк. */
+    private suspend fun recoveredWithin(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (scope.isActive) {
+            if (isConnected()) return true
+            val remaining = deadline - SystemClock.elapsedRealtime()
+            if (remaining <= 0) return false
+            withTimeoutOrNull(remaining) { wake.receive() }
+        }
+        return false
+    }
+
+    /** T из телеграмного ProxyRotationController.ROTATION_TIMEOUTS (с учётом настройки пользователя). */
+    private fun rotationTimeoutMs(): Long = try {
+        val list = ProxyRotationController.ROTATION_TIMEOUTS
+        var idx = SharedConfig.proxyRotationTimeout
+        if (idx < 0 || idx >= list.size) idx = ProxyRotationController.DEFAULT_TIMEOUT_INDEX
+        list[idx] * 1000L
+    } catch (t: Throwable) {
+        10_000L   // как дефолт ROTATION_TIMEOUTS
     }
 
     private fun isConnected(): Boolean {
@@ -78,14 +106,25 @@ class NetworkSupervisor(
         return s == ConnectionsManager.ConnectionStateConnected || s == ConnectionsManager.ConnectionStateUpdating
     }
 
+    private fun state(): Int = runCatching { ConnectionsManager.getInstance(account).connectionState }.getOrDefault(-1)
+
+    private fun stateName(s: Int): String = when (s) {
+        ConnectionsManager.ConnectionStateConnecting -> "Подключение"
+        ConnectionsManager.ConnectionStateWaitingForNetwork -> "Нет сети"
+        ConnectionsManager.ConnectionStateConnected -> "Подключено"
+        ConnectionsManager.ConnectionStateConnectingToProxy -> "Подключение к прокси"
+        ConnectionsManager.ConnectionStateUpdating -> "Обновление"
+        else -> "?($s)"
+    }
+
     override fun didReceivedNotification(id: Int, account: Int, vararg args: Any?) {
         if (id == NotificationCenter.didUpdateConnectionState && account == this.account) {
+            Log.d(TAG, "связь: ${stateName(state())}")
             wake.trySend(Unit)
         }
     }
 
     private companion object {
         const val TAG = "Routegram"
-        const val SETTLE_MS = 12_000L   // длительность коннекта движка; анти-churn + переспрос
     }
 }

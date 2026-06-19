@@ -4674,7 +4674,38 @@ public class AndroidUtilities {
         return true;
     }
 
+    // Routegram: единый диалог «прокси не поддерживается» (экран настроек + deep-link tg://proxy).
+    // onBack != null → «Назад» дополнительно выполнит его (напр. finishFragment у экрана прокси).
+    public static boolean routegramIsRu() {
+        try {
+            java.util.Locale l = LocaleController.getInstance().getCurrentLocale();
+            return l != null && "ru".equals(l.getLanguage());
+        } catch (Throwable t) {
+            return "ru".equals(java.util.Locale.getDefault().getLanguage());
+        }
+    }
+
+    public static void showRoutegramProxyUnsupported(Activity activity, Runnable onBack) {
+        if (activity == null) {
+            if (onBack != null) onBack.run();
+            return;
+        }
+        boolean ru = routegramIsRu();
+        org.telegram.ui.ActionBar.AlertDialog dialog = new org.telegram.ui.ActionBar.AlertDialog.Builder(activity)
+                .setTitle(ru ? "Прокси" : "Proxy")
+                .setMessage(ru
+                        ? "Данный клиент использует собственную систему обхода блокировок. Управление прокси-серверами в этом приложении не поддерживается."
+                        : "This client uses its own censorship-circumvention system. Managing proxy servers is not supported in this app.")
+                .setPositiveButton(ru ? "Назад" : "Back", (d, w) -> { if (onBack != null) onBack.run(); })
+                .create();
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.setCancelable(false);
+        dialog.show();
+    }
+
     public static void showProxyAlert(Activity activity, final String address, final String port, final String user, final String password, final String secret) {
+        // Routegram: добавление внешних прокси по ссылке tg://proxy не поддерживается (свой обход).
+        if (true) { showRoutegramProxyUnsupported(activity, null); return; }
         final BottomSheet.Builder builder = new BottomSheet.Builder(activity);
         builder.setApplyTopPadding(false);
         builder.setApplyBottomPadding(false);
