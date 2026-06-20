@@ -16,3 +16,6 @@ TMessagesProj_AppHuawei/afat/
 /build-apiid.log
 /build-rename.log
 /gradlew.bat
+# RouteGram: приватный signing keystore — НЕ коммитить (приватный ключ внутри); + бэкап старого публичного
+TMessagesProj/config/release.keystore
+TMessagesProj/config/release.keystore.telegram-public.bak
