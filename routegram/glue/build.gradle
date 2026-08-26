@@ -24,11 +24,13 @@ android {
     // чтобы variant-matching находил точное соответствие, когда приложение
     // собирается в одном из них (например, standalone). Тела пустые — для
     // библиотеки достаточно, чтобы тип просто существовал по имени.
+    // matchingFallbacks: upstream 12.10.x добавил в :TMessagesProj `api project(':jlatexmath')`,
+    // а у :jlatexmath есть только debug/release — без фолбэка variant-matching не разрешается.
     buildTypes {
-        standalone {}
-        HA_private {}
-        HA_public {}
-        HA_hardcore {}
+        standalone { matchingFallbacks = ['release'] }
+        HA_private { matchingFallbacks = ['release'] }
+        HA_public { matchingFallbacks = ['release'] }
+        HA_hardcore { matchingFallbacks = ['release'] }
         // debug и release присутствуют по умолчанию
     }
 

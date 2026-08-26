@@ -6,6 +6,14 @@
 
 ---
 
+## 0.1.6 — база Telegram 12.8.1 → 12.10.1
+
+- База Telegram обновлена до **12.10.1 (7038)** мержем upstream DrKLO (через 12.9.0/12.9.1/12.9.2/12.10.0).
+  Движок tg-ws-proxy — v1.2.3 (без изменений).
+- Upstream вынес нативные зависимости (ffmpeg, dav1d, libvpx, openh264, libyuv, opus/ogg/opusfile,
+  tlottie) и jlatexmath в git submodules — для сборки нужен `git submodule update --init --recursive`.
+- Тулчейн из upstream: AGP 8.10.1, Kotlin 2.1.0, compileSdk/targetSdk 36, build-tools 36.0.0, CMake 3.22.1.
+
 ## 0.1.5 — база Telegram 12.7.3 → 12.8.1
 
 - Обновлена база Telegram for Android до **12.8.1 (6916)** мержем upstream DrKLO.
