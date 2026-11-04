@@ -1,0 +1,2 @@
+# Telegram's theme parser expects LF; CRLF turns numeric colors transparent.
+TMessagesProj/src/main/assets/*.attheme text eol=lf

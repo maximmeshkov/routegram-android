@@ -1,0 +1,2 @@
+# Retired Rust checkout may remain locally for rollback; it is not a dependency.
+/third_party/tg-ws-proxy/

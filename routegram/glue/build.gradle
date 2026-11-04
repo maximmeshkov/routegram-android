@@ -16,7 +16,7 @@ android {
     compileSdkVersion 35
 
     defaultConfig {
-        minSdkVersion 21
+        minSdkVersion 28
         targetSdkVersion 35
     }
 
@@ -41,10 +41,6 @@ android {
 
     kotlinOptions {
         jvmTarget = '1.8'
-        // :TMessagesProj транзитивно тянет kotlin-stdlib 2.1.x, а проект компилируется
-        // Kotlin 1.9.20. Пропускаем проверку версии метаданных (stdlib обратно совместим),
-        // чтобы НЕ менять версию Kotlin в upstream-корне. Приоритет — лёгкий бамп клиента.
-        freeCompilerArgs += ["-Xskip-metadata-version-check"]
     }
 }
 

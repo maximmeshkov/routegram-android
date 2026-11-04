@@ -1,7 +1,5 @@
-// :routegram:libtgwsproxy — нативная обёртка ws-proxy («почти-либа»).
-// Собирает libtgwsproxy.so из submodule routegram/third_party/tg-ws-proxy через
-// cargo-ndk и вызывает его C-API через JNA. Зависит только от :routegram:core.
-// Submodule и его build_so.bat НЕ трогаем — собираем своей Gradle-задачей в build/.
+// Unmodified Flowseal + CPython, packaged independently of Telegram.
+// All upstream versions and artifact checksums live in upstream.json.
 
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
@@ -11,20 +9,21 @@ repositories {
     google()
 }
 
-def cargoBin = "${System.getProperty('user.home')}/.cargo/bin"
-def rustCrate = file("$rootDir/routegram/third_party/tg-ws-proxy")
+def proxyAbis = (findProperty('routegramProxyAbis') ?: 'arm64-v8a,armeabi-v7a,x86_64').split(',')
 
 android {
     namespace 'com.routegram.wsproxy'
-    compileSdkVersion 35
+    compileSdkVersion 36
     ndkVersion '27.2.12479018'
+    useLibrary 'android.test.runner', false
+    useLibrary 'android.test.base', false
 
     defaultConfig {
-        minSdkVersion 21
+        minSdkVersion 28
         targetSdkVersion 35
-        // R8 приложения минифицирует и наш код. JNA маппит интерфейс на C-функции
-        // ПО ИМЕНАМ методов — эти keep-правила едут с библиотекой в потребителя.
         consumerProguardFiles 'consumer-rules.pro'
+        testInstrumentationRunner 'android.test.InstrumentationTestRunner'
+        ndk { abiFilters.addAll(proxyAbis) }
     }
 
     // Зеркалим кастомные buildType'ы upstream — чтобы variant-matching разрешился,
@@ -45,26 +44,24 @@ android {
         jvmTarget = '1.8'
     }
 
-    // Собранные .so подхватываются отсюда и пакуются в AAR.
-    sourceSets.main.jniLibs.srcDirs += "$buildDir/rustJniLibs"
+    sourceSets.main.jniLibs.srcDirs += "$buildDir/pythonRuntime/jniLibs"
+    sourceSets.main.assets.srcDirs += "$buildDir/pythonRuntime/assets"
+    packagingOptions { jniLibs { useLegacyPackaging true } }
 }
 
-// Сборка .so из Rust-submodule через cargo-ndk. Стерильно: cargo target и вывод — в build/.
-// Пересобирается только при изменении Rust-исходников (inputs/outputs).
-task buildRustProxy(type: Exec) {
-    workingDir  rustCrate
-    environment 'ANDROID_NDK_HOME', android.ndkDirectory.absolutePath
-    environment 'CARGO_TARGET_DIR', "$buildDir/rustTarget"
-    environment 'PATH', "$cargoBin${File.pathSeparator}${System.getenv('PATH')}"
-    commandLine "$cargoBin/cargo.exe", 'ndk',
-                '-t', 'arm64-v8a', '-t', 'armeabi-v7a', '-t', 'x86_64',
-                '-o', "$buildDir/rustJniLibs", 'build', '--release'
-    inputs.files fileTree(rustCrate) { include 'src/**', 'Cargo.toml', 'Cargo.lock' }
-    outputs.dir "$buildDir/rustJniLibs"
+task buildPythonProxy(type: Exec) {
+    workingDir projectDir
+    commandLine([findProperty('routegramPython') ?: 'python', 'tools/build.py'] +
+            proxyAbis.collectMany { ['--abi', it] })
+    inputs.files fileTree(projectDir) {
+        include 'upstream.json', 'tools/*.py', 'tools/Dockerfile', 'src/main/c/**', 'src/main/python/**'
+    }
+    inputs.property 'abis', proxyAbis.join(',')
+    outputs.dir "$buildDir/pythonRuntime"
 }
-preBuild.dependsOn buildRustProxy
+preBuild.dependsOn buildPythonProxy
 
 dependencies {
     implementation project(':routegram:core')
-    implementation 'net.java.dev.jna:jna:5.14.0@aar'
+    implementation 'net.java.dev.jna:jna:5.19.1@aar'
 }

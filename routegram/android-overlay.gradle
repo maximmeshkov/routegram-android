@@ -1,0 +1,20 @@
+// Applied only to Telegram's app/library projects by routegram/settings.gradle.
+androidComponents.finalizeDsl { androidDsl ->
+    androidDsl.defaultConfig.minSdk = Math.max(28, androidDsl.defaultConfig.minSdk ?: 28)
+    androidDsl.productFlavors.each { flavor ->
+        if (flavor.minSdk != null) flavor.minSdk = Math.max(28, flavor.minSdk)
+    }
+
+    if (project.path == ':TMessagesProj') {
+        def versionProperties = new Properties()
+        rootProject.file('routegram/version.properties').withInputStream { versionProperties.load(it) }
+        androidDsl.defaultConfig.buildConfigField 'String', 'ROUTEGRAM_VERSION',
+                '"' + versionProperties.getProperty('version', 'dev') + '"'
+        androidDsl.defaultConfig.buildConfigField 'String', 'ROUTEGRAM_BUILD_TIME',
+                '"' + new Date().format('yyyy-MM-dd HH:mm') + '"'
+    }
+}
+
+if (project.path == ':TMessagesProj_AppStandalone') {
+    dependencies.add('implementation', project(':routegram:glue'))
+}

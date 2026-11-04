@@ -5,3 +5,13 @@
 include ':routegram:core'
 include ':routegram:glue'
 include ':routegram:libtgwsproxy'
+
+// Keep RouteGram's Android settings outside the upstream build files.
+def routegramAndroidOverlay = new File(settingsDir, 'routegram/android-overlay.gradle')
+gradle.beforeProject { target ->
+    if (target.path == ':TMessagesProj' || target.path.startsWith(':TMessagesProj_App')) {
+        ['com.android.application', 'com.android.library'].each { pluginId ->
+            target.plugins.withId(pluginId) { target.apply from: routegramAndroidOverlay }
+        }
+    }
+}

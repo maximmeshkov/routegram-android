@@ -1,0 +1,16 @@
+RouteGram 0.2.0
+
+Update the complete Telegram base to official 13.1.1 (7237), preserving its
+upstream dependency versions and native submodule pins.
+
+Replace the archived Rust proxy with the original Flowseal/tg-ws-proxy 1.11.4,
+embedded through CPython 3.13.18 in the separate routegram/libtgwsproxy module.
+Keep protocol sources unchanged, retain automatic local MTProto routing, and
+adapt Telegram's new ProxySettings API only in our glue module.
+
+Require Android 9+, add the by MLab repository link, and preserve LF theme
+assets to prevent transparent text after Windows checkout.
+
+Telegram: 3de37c8cfb039452be7398909461da6288babf15.
+Flowseal: 2085861957070eeea07990a522b29f42e5230210.
+Validation evidence and limits: routegram/DEPENDENCY_REVIEW.md.
